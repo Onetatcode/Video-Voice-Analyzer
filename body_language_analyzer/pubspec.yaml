@@ -1,0 +1,40 @@
+name: body_language_analyzer
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Supabase for auth, storage, and database
+  supabase_flutter: ^2.9.0
+
+  # File/video picking
+  file_picker: ^10.2.0
+
+  # HTTP client
+  http: ^1.2.2
+
+  # State management
+  provider: ^6.1.5
+
+  # Environment variables
+  flutter_dotenv: ^5.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
