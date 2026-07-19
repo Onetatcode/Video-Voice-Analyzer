@@ -5,30 +5,30 @@
 ---
 
 ## Current Task
-Create Supabase Storage bucket `videos` with RLS, and create `reports` table with RLS policies
+Build Flutter video upload screen with Supabase Storage integration
 
 ## Why This Task
-Phase 2 (Supabase Setup) requires Storage bucket for video uploads and `reports` table for storing analysis results — both with Row Level Security so users only access their own data.
+Phase 2 (Supabase Setup) requires wiring the upload flow: pick video → upload to Supabase Storage → create `reports` row with status `pending`. This is the final piece of Phase 2 before moving to Phase 3 UI.
 
 ## Related Requirements
 - Phase reference: Phase 2 — Supabase Setup
-- Relevant PRD sections: Core Features — "Basic auth via Supabase", "Report history list"
-- Implementation plan: Phase 2, bullets 22-26 (DB schema, RLS, Storage bucket)
+- Relevant PRD sections: Core Features — "User uploads a single video file", "Report history list"
+- Implementation plan: Phase 2, bullet 26 ("Wire Flutter upload flow: pick video → upload to Supabase Storage → create `reports` row with status `pending`")
 
 ## Reference Files
 - `implementation_plan.md` — Phase 2 section
 - `prd.md` — Core Features
-- Code files: (Supabase dashboard SQL editor)
+- Code files: `lib/services/storage_service.dart` (new), `lib/screens/upload_screen.dart` (new), `lib/models/report.dart` (new), `lib/main.dart` (add route)
 
 ## Acceptance Criteria
-- [ ] Storage bucket `videos` created with 50MB limit
-- [ ] RLS policies on `videos`: INSERT/SELECT/DELETE where `auth.uid() = owner`
-- [ ] `reports` table created with columns: id (uuid, pk), user_id (uuid, fk to auth.users), video_url (text), voice_score (int), body_score (int), confidence_score (int), report_json (jsonb), created_at (timestamptz), status (text: pending/processing/complete/failed)
-- [ ] RLS policies on `reports`: SELECT/INSERT/UPDATE where `auth.uid() = user_id`
-- [ ] No DELETE policy on `reports` (history retained)
+- [ ] `StorageService` class with `uploadVideo(File)` returning video URL
+- [ ] `Report` model with fromJson/toJson
+- [ ] `UploadScreen` with video picker, upload progress, success/error states
+- [ ] On success: create `reports` row with `status: 'pending'`, `video_url`, `user_id`
+- [ ] Navigate from HomeScreen "Upload Video" button to UploadScreen
+- [ ] Upload button in HomeScreen wired to navigation
 
 ## Notes / Blockers
-- Must run SQL in Supabase Dashboard → SQL Editor
-- Bucket name must match Flutter upload code (`videos`)
-- `report_json` uses `jsonb` for efficient querying
-- `status` defaults to `'pending'`
+- Supabase Storage bucket `videos` and `reports` table with RLS already created (manual step)
+- Uses `file_picker` for video selection
+- Glassmorphism styling deferred to Phase 3 — basic Material 3 for now

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -36,12 +37,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _signOut() async {
+    final auth = context.read<AuthService>();
+    await auth.signOut();
+    // AuthGate will handle navigation
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Body Language & Voice Analyzer'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _signOut,
+            tooltip: 'Logout',
+          ),
+        ],
       ),
       body: Center(
         child: Padding(
@@ -86,6 +100,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: _checkBackendHealth,
                       icon: const Icon(Icons.refresh),
                       label: const Text('Check Backend Again'),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        // TODO: Navigate to Upload screen (Phase 3)
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Upload screen coming in Phase 3')),
+                        );
+                      },
+                      icon: const Icon(Icons.upload_file),
+                      label: const Text('Upload Video'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                      ),
                     ),
                   ],
                 ),
