@@ -9,3 +9,5 @@ moviepy==1.0.3
 numpy==2.3.5
 pydantic
 pydantic-settings
+mediapipe==0.10.35
+requests==2.32.3

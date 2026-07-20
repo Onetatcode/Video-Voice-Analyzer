@@ -38,9 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/home');
-      }
+      // AuthGate's StreamBuilder will detect the session and show MainShell
     } catch (e) {
       setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
     } finally {

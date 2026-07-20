@@ -25,15 +25,19 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final api = context.read<ApiService>();
       final result = await api.healthCheck();
-      setState(() {
-        _healthStatus = 'Backend: ${result['status'] ?? 'OK'}';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _healthStatus = 'Backend: ${result['status'] ?? 'OK'}';
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _healthStatus = 'Backend unreachable: $e';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _healthStatus = 'Backend unreachable: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -103,12 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton.icon(
-                      onPressed: () {
-                        // TODO: Navigate to Upload screen (Phase 3)
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Upload screen coming in Phase 3')),
-                        );
-                      },
+                      onPressed: () => Navigator.of(context).pushNamed('/upload'),
                       icon: const Icon(Icons.upload_file),
                       label: const Text('Upload Video'),
                       style: ElevatedButton.styleFrom(

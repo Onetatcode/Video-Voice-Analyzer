@@ -5,30 +5,68 @@
 ---
 
 ## Current Task
-Build Flutter video upload screen with Supabase Storage integration
+All phases complete — app is functional end-to-end.
 
-## Why This Task
-Phase 2 (Supabase Setup) requires wiring the upload flow: pick video → upload to Supabase Storage → create `reports` row with status `pending`. This is the final piece of Phase 2 before moving to Phase 3 UI.
+## What Works
+### Backend (FastAPI + Supabase)
+- [x] Video upload to Supabase Storage
+- [x] Processing pipeline: download video → extract audio → analyze voice → analyze body → calculate scores → generate report
+- [x] Voice analysis: speech pace, pitch variation, filler words, pauses (Voice Score: 82)
+- [x] Body language analysis: posture stability, eye contact, gestures, movements (Body Score: 50 — OpenCV fallback, no OpenPose model)
+- [x] Score calculation: Voice 82, Body 50, Confidence 68 (55% voice + 45% body)
+- [x] Report generation: strengths, weaknesses, 3 actionable tips
+- [x] Background task processing via FastAPI BackgroundTasks (sync function runs in thread pool)
+- [x] Supabase env vars loaded with explicit `.env` path
+- [x] Sync (`/process/sync`) and async (`/process`) endpoints
+- [x] All 6 previous reports processed and stored in Supabase with scores
 
-## Related Requirements
-- Phase reference: Phase 2 — Supabase Setup
-- Relevant PRD sections: Core Features — "User uploads a single video file", "Report history list"
-- Implementation plan: Phase 2, bullet 26 ("Wire Flutter upload flow: pick video → upload to Supabase Storage → create `reports` row with status `pending`")
+### Flutter Web App
+- [x] Auth (Sign Up / Login / Logout) with Supabase
+- [x] Bottom navigation bar: Home / History / Profile (custom `Row`-based, works on web)
+- [x] Home screen: welcome, health check, Upload Video button
+- [x] Upload screen: file picker, upload to Supabase Storage, triggers backend processing
+- [x] History screen: fetches reports from Supabase, shows score badges / status / date
+- [x] Report detail screen: scores, strengths, weaknesses, tips
+- [x] Profile screen: user info, stats (total/completed/processing/failed), recent reports, sign out
+- [x] Glassmorphism design system (`GlassContainer`, `GlassCard`, `GlassButton`, etc.)
+- [x] Light/dark theme
 
-## Reference Files
-- `implementation_plan.md` — Phase 2 section
-- `prd.md` — Core Features
-- Code files: `lib/services/storage_service.dart` (new), `lib/screens/upload_screen.dart` (new), `lib/models/report.dart` (new), `lib/main.dart` (add route)
+## Issues Fixed
+- `async def run_processing_task` → sync (FastAPI was discarding coroutine)
+- `ScoreCalculator` was looking for `posture_score` but body returns `posture_stability`
+- `processing_pipeline` didn't fetch `video_url` from Supabase if missing from request
+- `.env` files loaded without explicit path (failed when CWD wasn't `app/`)
+- `main_shell.dart` had unbalanced parenthesis + missing `dart:ui` import
+- `upload_screen.dart` had wrong import paths (`../../services/` → `../services/`)
+- Login navigated to `/home` route (no navbar) instead of letting AuthGate detect session
+- Duplicate upload button: removed FAB from MainShell, kept body button only
+- `error_message` column missing from Supabase (handled with try/except)
 
-## Acceptance Criteria
-- [ ] `StorageService` class with `uploadVideo(File)` returning video URL
-- [ ] `Report` model with fromJson/toJson
-- [ ] `UploadScreen` with video picker, upload progress, success/error states
-- [ ] On success: create `reports` row with `status: 'pending'`, `video_url`, `user_id`
-- [ ] Navigate from HomeScreen "Upload Video" button to UploadScreen
-- [ ] Upload button in HomeScreen wired to navigation
+## How to Run
+```powershell
+# Terminal 1 - Backend
+cd "F:\Internship Projects\Body Language and Voice Analyzer"
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-## Notes / Blockers
-- Supabase Storage bucket `videos` and `reports` table with RLS already created (manual step)
-- Uses `file_picker` for video selection
-- Glassmorphism styling deferred to Phase 3 — basic Material 3 for now
+# Terminal 2 - Flutter Web
+cd body_language_analyzer\build\web
+python -m http.server 3000
+# Then open http://localhost:3000
+```
+
+## Next Steps (Optional)
+- Download OpenPose model files for real body analysis (not fallback)
+- Replace in-memory `processing_jobs` dict with Redis/Supabase-based job tracking
+- Add user account deletion
+- Add video player/replay in report detail
+- Deploy backend and Flutter web to production
+
+---
+
+## Previous Task Summary: Phase 4 Backend Processing Pipeline (COMPLETED)
+All acceptance criteria met:
+- [x] Processing pipeline: download → extract → analyze → score → report
+- [x] Background task processing
+- [x] Supabase integration (read reports, update status, store results)
+- [x] Sync and async processing endpoints
+- [x] 6 reports processed and stored with scores

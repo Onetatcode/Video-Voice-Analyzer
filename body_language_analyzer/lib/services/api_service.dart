@@ -22,4 +22,24 @@ class ApiService {
     }
     throw Exception('Health check failed: ${response.statusCode}');
   }
+
+  Future<Map<String, dynamic>> startProcessing(String reportId) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/v1/process'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'report_id': reportId}),
+    );
+    if (response.statusCode == 200 || response.statusCode == 202) {
+      return json.decode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Start processing failed: ${response.statusCode} - ${response.body}');
+  }
+
+  Future<Map<String, dynamic>> getProcessingStatus(String reportId) async {
+    final response = await http.get(Uri.parse('$_baseUrl/api/v1/process/$reportId'));
+    if (response.statusCode == 200) {
+      return json.decode(response.body) as Map<String, dynamic>;
+    }
+    throw Exception('Get status failed: ${response.statusCode}');
+  }
 }
