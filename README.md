@@ -78,6 +78,33 @@ A Flutter web app + Python FastAPI backend that analyzes uploaded videos for bod
 - **Glassmorphism UI** — Frosted glass design with light/dark theme
 - **Bottom Nav** — Home / History / Profile tabs
 
+## Screenshots
+
+<div align="center">
+  <table>
+    <tr>
+      <td><img src="screenshots/Upload_Page.png" alt="Upload Page" width="250"/></td>
+      <td><img src="screenshots/processing_v1.2.png" alt="Processing Status" width="250"/></td>
+      <td><img src="screenshots/History_v1.2.png" alt="History Page" width="250"/></td>
+    </tr>
+    <tr>
+      <td align="center"><b>Upload Page</b></td>
+      <td align="center"><b>Processing Status</b></td>
+      <td align="center"><b>History Page</b></td>
+    </tr>
+    <tr>
+      <td><img src="screenshots/batch_analysis_complete.png" alt="Batch Analysis Complete" width="250"/></td>
+      <td><img src="screenshots/Updated_report_v1.2.png" alt="Updated Report" width="250"/></td>
+      <td><img src="screenshots/transcript_v1.2.png" alt="Transcript View" width="250"/></td>
+    </tr>
+    <tr>
+      <td align="center"><b>Batch Analysis Complete</b></td>
+      <td align="center"><b>Report Detail</b></td>
+      <td align="center"><b>Transcript View</b></td>
+    </tr>
+  </table>
+</div>
+
 ## Tech Stack
 
 | Layer          | Technology                                                                 |
