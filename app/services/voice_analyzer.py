@@ -1,11 +1,14 @@
 import numpy as np
 import logging
+import re
 from typing import Dict, Any, Optional
 from pathlib import Path
 
 from .video_processor import AudioProcessor
 
 logger = logging.getLogger(__name__)
+
+FILLER_WORDS = {"um", "uh", "ah", "er", "like", "you know", "actually", "basically", "literally", "well", "so"}
 
 
 class VoiceAnalyzer:
@@ -16,12 +19,32 @@ class VoiceAnalyzer:
 
     def analyze(self, audio_path: str) -> Dict[str, Any]:
         """
-        Perform comprehensive voice analysis.
+        Perform comprehensive voice analysis with Gemini STT.
         Returns dict with all voice features needed for scoring.
         """
         try:
-            # Extract base features
+            # Extract base heuristic features
             features = self.audio_processor.extract_voice_features(audio_path)
+
+            # Transcribe with HF Whisper API
+            transcript = self.audio_processor.transcribe(audio_path)
+
+            if transcript:
+                real_word_count = len(transcript.split())
+                duration = features.get("total_duration", 1)
+                real_pace = (real_word_count / duration) * 60 if duration > 0 else 0
+                real_filler_count = self._count_filler_words(transcript)
+
+                # Replace heuristic estimates with real values
+                features["speech_pace"] = round(real_pace, 1)
+                features["filler_word_count"] = real_filler_count
+                features["transcript"] = transcript
+                features["word_count"] = real_word_count
+                logger.info(f"HF Whisper STT: {real_word_count} words, {real_filler_count} filler words, pace={real_pace:.1f} wpm")
+            else:
+                features["transcript"] = ""
+                features["word_count"] = 0
+                logger.info("HF Whisper STT unavailable, using heuristic features")
 
             # Additional analysis
             features["clarity_score"] = self._compute_clarity_score(features)
@@ -32,6 +55,24 @@ class VoiceAnalyzer:
         except Exception as e:
             logger.error(f"Voice analysis failed: {e}")
             return self._empty_analysis()
+
+    def _count_filler_words(self, text: str) -> int:
+        """Count filler words in transcript text."""
+        text = text.lower()
+        words = text.split()
+        count = 0
+        i = 0
+        while i < len(words):
+            # Check multi-word fillers first
+            if i + 1 < len(words) and f"{words[i]} {words[i+1]}" in FILLER_WORDS:
+                count += 1
+                i += 2
+            elif words[i] in FILLER_WORDS:
+                count += 1
+                i += 1
+            else:
+                i += 1
+        return count
 
     def _compute_clarity_score(self, features: Dict) -> float:
         """Compute speech clarity score (0-100)."""
@@ -131,4 +172,6 @@ class VoiceAnalyzer:
             "clarity_score": 0.0,
             "consistency_score": 0.0,
             "engagement_score": 0.0,
+            "transcript": "",
+            "word_count": 0,
         }

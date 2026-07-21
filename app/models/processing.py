@@ -34,6 +34,7 @@ class VoiceFeatures(BaseModel):
     pause_frequency: float = Field(..., description="Pauses per minute")
     avg_pause_duration: float = Field(..., description="Average pause duration in seconds")
     total_duration: float = Field(..., description="Total speech duration in seconds")
+    transcript: Optional[str] = Field(default=None, description="Full speech transcript from Gemini STT")
 
 
 class BodyFeatures(BaseModel):

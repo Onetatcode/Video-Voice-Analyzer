@@ -1,311 +1,289 @@
-import cv2
-import numpy as np
-import logging
 import os
+import logging
 from typing import Dict, Any, List, Optional, Tuple
+
+import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+COCO_KEYPOINTS = {
+    "nose": 0, "left_eye": 1, "right_eye": 2, "left_ear": 3, "right_ear": 4,
+    "left_shoulder": 5, "right_shoulder": 6, "left_elbow": 7, "right_elbow": 8,
+    "left_wrist": 9, "right_wrist": 10, "left_hip": 11, "right_hip": 12,
+    "left_knee": 13, "right_knee": 14, "left_ankle": 15, "right_ankle": 16,
+}
+
+KEYPOINT_NAMES = {v: k for k, v in COCO_KEYPOINTS.items()}
+
+MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "yolov8n-pose.onnx")
+
 
 class BodyAnalyzer:
-    """Analyzes body language from video frames using OpenCV DNN for pose estimation."""
-    
-    def __init__(
-        self,
-        min_detection_confidence: float = 0.5,
-        min_tracking_confidence: float = 0.5,
-        model_complexity: int = 1,
-    ):
-        """
-        Args:
-            min_detection_confidence: Minimum confidence for pose detection
-            min_tracking_confidence: Minimum confidence for pose tracking
-            model_complexity: 0=lite, 1=full, 2=heavy (not used with OpenCV)
-        """
-        # Use OpenCV's DNN module with OpenPose model
-        # Download OpenPose model if needed
-        self.proto_path = self._get_model_path("pose_deploy_linevec.prototxt")
-        self.model_path = self._get_model_path("pose_iter_440000.caffemodel")
-        
-        if not os.path.exists(self.proto_path) or not os.path.exists(self.model_path):
-            logger.warning("OpenPose model files not found. Using fallback analysis.")
-            self.net = None
-        else:
-            self.net = cv2.dnn.readNetFromCaffe(self.proto_path, self.model_path)
-            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        
-        self.pose_pairs = [
-            [1, 2], [1, 5], [2, 3], [3, 4], [5, 6], [6, 7],
-            [1, 8], [8, 9], [9, 10], [1, 11], [11, 12], [12, 13],
-            [1, 0], [0, 14], [14, 16], [0, 15], [15, 17],
-            [2, 17], [5, 18]
-        ]
-        
-        self.pose_points = {
-            "nose": 0, "neck": 1, "rshoulder": 2, "relbow": 3, "rwrist": 4,
-            "lshoulder": 5, "lelbow": 6, "lwrist": 7, "rhip": 8, "rknee": 9,
-            "rankle": 10, "lhip": 11, "lknee": 12, "lankle": 13,
-            "reye": 14, "leye": 15, "rear": 17, "lear": 18
-        }
+    """Analyzes body language using local YOLOv8-pose ONNX model (no native DLLs)."""
 
-    def _get_model_path(self, filename: str) -> str:
-        """Get model file path, downloading if necessary."""
-        import os
-        model_dir = os.path.join(os.path.dirname(__file__), "..", "..", "models")
-        os.makedirs(model_dir, exist_ok=True)
-        file_path = os.path.join(model_dir, filename)
-        
-        if not os.path.exists(file_path):
-            logger.info(f"Model file {filename} not found. Please download manually.")
-        
-        return os.path.abspath(file_path)
+    def __init__(self, api_key: Optional[str] = None, model_id: str = ""):
+        self.api_key = api_key or os.getenv("ROBOFLOW_API_KEY", "")
+        self.model_id = model_id or ""
+        self._session = None
+        self._ort_session = None
+
+    def _load_onnx(self):
+        if self._ort_session is not None:
+            return
+        try:
+            import onnxruntime
+            if os.path.exists(MODEL_PATH):
+                self._ort_session = onnxruntime.InferenceSession(
+                    MODEL_PATH, providers=["CPUExecutionProvider"]
+                )
+                logger.info(f"Loaded ONNX model: {MODEL_PATH}")
+            else:
+                logger.warning(f"ONNX model not found at {MODEL_PATH}")
+        except Exception as e:
+            logger.warning(f"Failed to load ONNX Runtime: {e}")
+
+    def _onnx_infer(self, frame: np.ndarray) -> Optional[List[np.ndarray]]:
+        if self._ort_session is None:
+            return None
+        try:
+            img = Image.fromarray(frame).resize((640, 640), Image.LANCZOS)
+            img_np = np.array(img, dtype=np.float32) / 255.0
+            input_tensor = img_np.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32)
+            input_name = self._ort_session.get_inputs()[0].name
+            outputs = self._ort_session.run(None, {input_name: input_tensor})
+            return outputs
+        except Exception as e:
+            logger.warning(f"ONNX inference failed: {e}")
+            return None
+
+    def _parse_onnx_keypoints(self, outputs: List[np.ndarray]) -> Optional[Dict[int, Tuple[float, float, float]]]:
+        out = outputs[0]
+        if out.shape != (1, 56, 8400):
+            logger.warning(f"Unexpected ONNX output shape: {out.shape}")
+            return None
+        data = out[0]
+        raw_scores = data[4, :]
+        best_idx = int(np.argmax(raw_scores))
+        best_conf = 1.0 / (1.0 + np.exp(-raw_scores[best_idx]))
+        if best_conf < 0.3:
+            return None
+        keypoints = {}
+        for kpt_idx in range(17):
+            x = float(data[5 + kpt_idx * 3, best_idx]) / 640.0
+            y = float(data[5 + kpt_idx * 3 + 1, best_idx]) / 640.0
+            conf = float(data[5 + kpt_idx * 3 + 2, best_idx])
+            if conf > 0.1:
+                keypoints[kpt_idx] = (x, y, conf)
+        return keypoints if len(keypoints) >= 3 else None
+
+    def _roboflow_infer(self, frame: np.ndarray) -> Optional[Dict]:
+        if not self.api_key or not self.model_id:
+            return None
+        try:
+            import base64
+            from io import BytesIO
+            import requests as req
+            pil_img = Image.fromarray(frame)
+            buffer = BytesIO()
+            pil_img.save(buffer, format="JPEG")
+            img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            if self._session is None:
+                self._session = req.Session()
+            resp = self._session.post(
+                f"https://detect.roboflow.com/{self.model_id}",
+                params={"api_key": self.api_key},
+                json={"image": f"data:image/jpeg;base64,{img_b64}"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            preds = resp.json().get("predictions", [])
+            return preds[0] if preds else None
+        except Exception as e:
+            logger.warning(f"Roboflow API call failed: {e}")
+            return None
+
+    def _parse_roboflow_keypoints(self, prediction: Dict) -> Optional[Dict[int, Tuple[float, float, float]]]:
+        raw_kps = prediction.get("keypoints")
+        if not raw_kps:
+            return None
+        keypoints = {}
+        for kp in raw_kps:
+            idx = COCO_KEYPOINTS.get(kp.get("class_name", ""))
+            if idx is not None:
+                keypoints[idx] = (kp["x"], kp["y"], kp.get("confidence", 1.0))
+        return keypoints if len(keypoints) >= 3 else None
+
+    def _infer_keypoints(self, frame: np.ndarray) -> Optional[Dict[int, Tuple[float, float, float]]]:
+        self._load_onnx()
+        outputs = self._onnx_infer(frame)
+        if outputs is not None:
+            kps = self._parse_onnx_keypoints(outputs)
+            if kps is not None:
+                return kps
+        pred = self._roboflow_infer(frame)
+        if pred is not None:
+            return self._parse_roboflow_keypoints(pred)
+        return None
 
     def analyze_frames(self, frames: List[np.ndarray], fps: float = 30.0) -> Dict[str, Any]:
-        """
-        Analyze a list of frames for body language features.
-        Returns dict with posture, stability, expressiveness, eye contact metrics.
-        """
         if not frames:
             return self._empty_features()
 
-        if self.net is None:
-            logger.warning("OpenPose model not available. Using fallback analysis.")
-            return self._fallback_analysis(frames, fps)
+        if not os.path.exists(MODEL_PATH) and not self.api_key:
+            logger.warning("No ONNX model or Roboflow API key — returning default body features")
+            return self._empty_features()
 
         try:
+            self._load_onnx()
+        except Exception:
+            pass
+
+        logger.info(f"Analyzing {len(frames)} frames for body language...")
+        try:
             landmarks_sequence = []
-            face_visible_sequence = []
+            face_visible_count = 0
+            total_frames_analyzed = 0
 
             for frame in frames:
-                # Run pose detection
-                keypoints = self._detect_pose(frame)
-                
-                if keypoints is not None:
-                    landmarks = self._extract_landmarks(keypoints)
-                    landmarks_sequence.append(landmarks)
-                    
-                    # Check if face is visible (for eye contact estimation)
-                    face_visible = self._is_face_visible(keypoints)
-                    face_visible_sequence.append(face_visible)
-                else:
-                    face_visible_sequence.append(False)
+                kps = self._infer_keypoints(frame)
+                if kps is None:
+                    continue
+                total_frames_analyzed += 1
+                landmarks_sequence.append(kps)
+                if self._is_face_visible(kps):
+                    face_visible_count += 1
 
             if not landmarks_sequence:
-                logger.warning("No pose landmarks detected in any frame")
+                logger.warning("No pose detected in any frame — using defaults")
                 return self._empty_features()
 
-            # Compute metrics from sequence
-            features = {
+            logger.info(f"Pose detected in {len(landmarks_sequence)}/{total_frames_analyzed} frames")
+
+            return {
                 "posture_stability": self._compute_posture_score(landmarks_sequence),
                 "stability_score": self._compute_stability_score(landmarks_sequence),
                 "expressiveness_score": self._compute_expressiveness_score(landmarks_sequence),
-                "eye_contact_ratio": sum(face_visible_sequence) / len(face_visible_sequence) if face_visible_sequence else 0,
-                "gesture_frequency": self._compute_gesture_frequency(landmarks_sequence),
-                "movement_frequency": self._compute_movement_frequency(landmarks_sequence),
+                "eye_contact_ratio": face_visible_count / max(total_frames_analyzed, 1),
+                "gesture_frequency": self._compute_gesture_frequency(landmarks_sequence, fps),
+                "movement_frequency": self._compute_movement_frequency(landmarks_sequence, fps),
+                "head_nod_count": 0,
+                "shoulder_movement_score": 0.5,
             }
 
-            return features
-
         except Exception as e:
-            logger.error(f"Error analyzing body language: {e}")
+            logger.error(f"Body analysis failed: {e}")
             return self._empty_features()
 
-    def _detect_pose(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """Run pose detection on a single frame."""
-        if self.net is None:
-            return None
-        
-        height, width = frame.shape[:2]
-        inp_blob = cv2.dnn.blobFromImage(frame, 1.0 / 255, (368, 368), (0, 0, 0), swapRB=True, crop=False)
-        self.net.setInput(inp_blob)
-        output = self.net.forward()
-        
-        # Output shape: [1, 19, H, W] for 18 keypoints + background
-        return output
-
-    def _extract_keypoints(self, output: np.ndarray, frame_shape: Tuple[int, int]) -> Optional[Dict[int, Tuple[float, float, float]]]:
-        """Extract keypoint coordinates from network output."""
-        height, width = frame_shape[:2]
-        keypoints = {}
-        
-        for i in range(18):  # 18 keypoints in OpenPose
-            prob_map = output[0, i, :, :]
-            min_val, prob, _, point = cv2.minMaxLoc(prob_map)
-            
-            if prob > 0.1:  # Confidence threshold
-                x = (point[0] * frame_shape[1]) / output.shape[3]
-                y = (point[1] * frame_shape[0]) / output.shape[2]
-                keypoints[i] = (x / frame_shape[1], y / frame_shape[0], prob)
-        
-        return keypoints if keypoints else None
-
-    def _detect_pose(self, frame: np.ndarray) -> Optional[Dict[int, Tuple[float, float, float]]]:
-        """Run pose detection and extract keypoints."""
-        if self.net is None:
-            return None
-        
-        output = self._detect_pose(frame)
-        if output is None:
-            return None
-        
-        return self._extract_keypoints(output, frame.shape)
-
-    def _is_face_visible(self, keypoints: Dict[int, Tuple[float, float, float]]) -> bool:
-        """Check if face is visible (nose and eyes detected)."""
-        # Nose=0, LEye=14, REye=15, LEar=17, REar=18
-        required = [0, 14, 15]
+    def _is_face_visible(self, kps: Dict[int, Tuple]) -> bool:
+        required = [0, 1, 2]
         for idx in required:
-            if idx not in keypoints or keypoints[idx][2] < 0.3:
+            if idx not in kps or kps[idx][2] < 0.3:
                 return False
-        
-        # Check if face is roughly centered
-        nose = keypoints[0]
-        left_eye = keypoints[14]
-        right_eye = keypoints[15]
-        
-        face_center_x = (nose[0] + left_eye[0] + right_eye[0]) / 3
-        return 0.2 <= face_center_x <= 0.8
+        nose_x = kps[0][0]
+        return 0.15 <= nose_x <= 0.85
 
-    def _compute_posture_score(self, landmarks_sequence: List[Dict]) -> float:
-        """Compute posture score based on head-shoulder-hip alignment."""
+    def _compute_posture_score(self, seq: List[Dict[int, Tuple]]) -> float:
         scores = []
-        for landmarks in landmarks_sequence:
+        for kps in seq:
             try:
-                nose = landmarks.get(0)
-                left_shoulder = landmarks.get(2)
-                right_shoulder = landmarks.get(5)
-                left_hip = landmarks.get(8)
-                right_hip = landmarks.get(11)
-                
-                if not all([nose, left_shoulder, right_shoulder, left_hip, right_hip]):
+                nose = kps.get(0)
+                lsh = kps.get(5)
+                rsh = kps.get(6)
+                lhip = kps.get(11)
+                rhip = kps.get(12)
+                if not all([nose, lsh, rsh, lhip, rhip]):
                     continue
-                
-                # Shoulder level
-                shoulder_diff = abs(left_shoulder[1] - right_shoulder[1])
-                shoulder_score = max(0, 100 - shoulder_diff * 500)
-                
-                # Head centered over shoulders
-                shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
-                head_alignment = abs(nose[0] - shoulder_center_x)
-                alignment_score = max(0, 100 - head_alignment * 300)
-                
-                # Vertical alignment
-                hip_center_x = (left_hip[0] + right_hip[0]) / 2
-                vertical_alignment = abs(nose[0] - hip_center_x)
-                vertical_score = max(0, 100 - vertical_alignment * 300)
-                
-                frame_score = (shoulder_score + alignment_score + vertical_score) / 3
-                scores.append(frame_score)
+                shoulder_diff = abs(lsh[1] - rsh[1])
+                shoulder_score = max(0, 1.0 - shoulder_diff * 5.0)
+                shoulder_cx = (lsh[0] + rsh[0]) / 2
+                head_align = abs(nose[0] - shoulder_cx)
+                alignment_score = max(0, 1.0 - head_align * 3.0)
+                hip_cx = (lhip[0] + rhip[0]) / 2
+                vert_align = abs(nose[0] - hip_cx)
+                vertical_score = max(0, 1.0 - vert_align * 3.0)
+                scores.append((shoulder_score + alignment_score + vertical_score) / 3)
             except Exception:
                 continue
-        
-        return round(np.mean(scores), 1) if scores else 50.0
+        return round(float(np.mean(scores)) if scores else 0.5, 2)
 
-    def _compute_stability_score(self, landmarks_sequence: List[Dict]) -> float:
-        if len(landmarks_sequence) < 2:
+    def _compute_stability_score(self, seq: List[Dict[int, Tuple]]) -> float:
+        if len(seq) < 2:
             return 75.0
-        
-        key_points = [0, 2, 5, 8, 11]  # nose, shoulders, hips
         variances = []
-        
-        for pt_idx in [0, 2, 5, 8, 11]:
+        for pt_idx in [0, 5, 6, 11, 12]:
             positions = []
-            for landmarks in landmarks_sequence:
-                if pt_idx in landmarks:
-                    positions.append(landmarks[pt_idx])
-            
+            for kps in seq:
+                if pt_idx in kps:
+                    positions.append(kps[pt_idx][:2])
             if len(positions) >= 2:
-                pos_array = np.array(positions)
-                var = np.mean(np.var(pos_array, axis=0))
-                variances.append(var)
-        
+                variances.append(float(np.mean(np.var(np.array(positions), axis=0))))
         if not variances:
             return 50.0
-        
-        avg_variance = np.mean(variances)
-        stability = max(0, 100 - avg_variance * 2000)
-        return round(min(100, stability), 1)
+        stability = max(0, 100.0 - float(np.mean(variances)) * 2000.0)
+        return round(min(100.0, stability), 1)
 
-    def _compute_expressiveness_score(self, landmarks_sequence: List[Dict]) -> float:
-        if len(landmarks_sequence) < 3:
+    def _compute_expressiveness_score(self, seq: List[Dict[int, Tuple]]) -> float:
+        if len(seq) < 3:
             return 50.0
-        
-        gesture_points = [4, 7, 9, 12]  # wrists and hands
-        gesture_scores = []
-        
-        for pt_idx in [4, 7, 9, 12]:
+        scores = []
+        for pt_idx in [9, 10]:
             positions = []
-            for landmarks in landmarks_sequence:
-                if pt_idx in landmarks:
-                    positions.append(landmarks[pt_idx][:2])
-            
+            for kps in seq:
+                if pt_idx in kps:
+                    positions.append(kps[pt_idx][:2])
             if len(positions) >= 3:
-                pos_array = np.array(positions)
-                diffs = np.diff(pos_array, axis=0)
-                distances = np.linalg.norm(diffs, axis=1)
-                total_movement = np.sum(distances)
-                score = min(100, total_movement * 1000)
-                gesture_scores.append(score)
-        
-        return round(np.mean(gesture_scores), 1) if gesture_scores else 50.0
+                arr = np.array(positions)
+                diffs = np.diff(arr, axis=0)
+                total_movement = float(np.sum(np.linalg.norm(diffs, axis=1)))
+                scores.append(min(100.0, total_movement * 100.0))
+        return round(float(np.mean(scores)) if scores else 50.0, 1)
 
-    def _compute_gesture_frequency(self, landmarks_sequence: List[Dict], fps: float) -> float:
-        if len(landmarks_sequence) < 10:
+    def _compute_gesture_frequency(self, seq: List[Dict[int, Tuple]], fps: float) -> float:
+        if len(seq) < 5:
             return 0.0
-        
-        wrist_positions = []
-        for landmarks in landmarks_sequence:
-            left = landmarks.get(4)
-            right = landmarks.get(7)
-            if left and right:
-                wrist_positions.append(((left[0] + right[0]) / 2, (left[1] + right[1]) / 2))
-        
-        if len(wrist_positions) < 5:
+        wrists = []
+        for kps in seq:
+            lw = kps.get(9)
+            rw = kps.get(10)
+            if lw and rw:
+                wrists.append(((lw[0] + rw[0]) / 2, (lw[1] + rw[1]) / 2))
+        if len(wrists) < 5:
             return 0.0
-        
         gestures = 0
-        for i in range(2, len(wrist_positions)):
-            v1 = np.array(wrist_positions[i]) - np.array(wrist_positions[i-1])
-            v2 = np.array(wrist_positions[i-1]) - np.array(wrist_positions[i-2])
-            norm1 = np.linalg.norm(v1)
-            norm2 = np.linalg.norm(v2)
-            if norm1 > 0.01 and norm2 > 0.01:
-                dot = np.dot(v1, v2)
-                angle = np.arccos(np.clip(dot / (norm1 * norm2), -1, 1))
+        for i in range(2, len(wrists)):
+            v1 = np.array(wrists[i]) - np.array(wrists[i - 1])
+            v2 = np.array(wrists[i - 1]) - np.array(wrists[i - 2])
+            n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+            if n1 > 0.005 and n2 > 0.005:
+                angle = np.arccos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
                 if angle > np.pi / 2:
                     gestures += 1
-        
-        duration_min = len(landmarks_sequence) / 30.0 / 60
+        duration_min = len(seq) / fps / 60.0
         return round(gestures / max(duration_min, 0.1), 1)
 
-    def _compute_movement_frequency(self, landmarks_sequence: List[Dict], fps: float) -> float:
-        if len(landmarks_sequence) < 10:
+    def _compute_movement_frequency(self, seq: List[Dict[int, Tuple]], fps: float) -> float:
+        if len(seq) < 5:
             return 0.0
-        
-        com_positions = []
-        for landmarks in landmarks_sequence:
-            key_pts = [0, 2, 5, 8, 11]
-            pts = [landmarks[k] for k in [0, 2, 5, 8, 11] if k in landmarks]
+        coms = []
+        for kps in seq:
+            pts = [kps[i] for i in [0, 5, 6, 11, 12] if i in kps]
             if pts:
-                com = np.mean([p[:2] for p in pts], axis=0)
-                com_positions.append(com)
-        
-        if len(com_positions) < 5:
+                coms.append(np.mean([p[:2] for p in pts], axis=0))
+        if len(coms) < 5:
             return 0.0
-        
         movements = 0
-        for i in range(1, len(com_positions)):
-            dist = np.linalg.norm(np.array(com_positions[i]) - np.array(com_positions[i-1]))
-            if dist > 0.02:
+        for i in range(1, len(coms)):
+            if np.linalg.norm(np.array(coms[i]) - np.array(coms[i - 1])) > 0.01:
                 movements += 1
-        
-        duration_min = len(landmarks_sequence) / 30.0 / 60
+        duration_min = len(seq) / fps / 60.0
         return round(movements / max(duration_min, 0.1), 1)
 
     def _empty_features(self) -> Dict[str, Any]:
         return {
             "posture_stability": 0.5,
+            "stability_score": 50.0,
+            "expressiveness_score": 50.0,
             "eye_contact_ratio": 0.5,
             "gesture_frequency": 0.0,
             "movement_frequency": 0.0,
@@ -313,11 +291,8 @@ class BodyAnalyzer:
             "shoulder_movement_score": 0.5,
         }
 
-    def _fallback_analysis(self, frames: List[np.ndarray], fps: float) -> Dict[str, Any]:
-        """Fallback when OpenPose model is not available."""
-        logger.info("Using fallback body analysis (no OpenPose model)")
-        return self._empty_features()
-
     def close(self):
-        """Clean up resources."""
-        pass
+        self._ort_session = None
+        if self._session:
+            self._session.close()
+            self._session = None

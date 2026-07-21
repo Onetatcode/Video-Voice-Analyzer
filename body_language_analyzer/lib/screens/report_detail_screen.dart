@@ -263,8 +263,41 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           if (json['strengths'] != null) _buildListSection('Strengths', json['strengths'], Icons.thumb_up, Colors.green),
           if (json['weaknesses'] != null) _buildListSection('Areas to Improve', json['weaknesses'], Icons.thumb_down, Colors.red),
           if (json['tips'] != null) _buildListSection('Actionable Tips', json['tips'], Icons.lightbulb, Colors.amber),
+          if (json['transcript'] != null && (json['transcript'] as String).isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildTranscriptSection(json['transcript'] as String),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildTranscriptSection(String transcript) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.transcribe, color: Colors.blue, size: 20),
+            const SizedBox(width: 8),
+            Text('Transcript', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.blue)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blue.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.blue.withOpacity(0.2)),
+          ),
+          child: Text(
+            transcript,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.5),
+          ),
+        ),
+      ],
     );
   }
 
