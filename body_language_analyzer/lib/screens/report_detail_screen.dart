@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/report.dart';
 import '../services/report_service.dart';
@@ -17,6 +19,9 @@ class ReportDetailScreen extends StatefulWidget {
 
 class _ReportDetailScreenState extends State<ReportDetailScreen> {
   late Future<Report?> _reportFuture;
+  Report? _report;
+  Timer? _pollTimer;
+  VideoPlayerController? _videoController;
 
   @override
   void initState() {
@@ -24,8 +29,51 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     _loadReport();
   }
 
-  void _loadReport() {
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  void _loadReport() async {
     _reportFuture = context.read<ReportService>().getReport(widget.reportId);
+    final report = await _reportFuture;
+    if (!mounted) return;
+    setState(() => _report = report);
+    if (report != null && report.isProcessing) {
+      _startPolling();
+    }
+    if (report != null && report.isComplete && report.videoUrl.isNotEmpty) {
+      _initVideo(report.videoUrl);
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (!mounted) return;
+      final updated = await context.read<ReportService>().getReport(widget.reportId);
+      if (!mounted) return;
+      setState(() {
+        _report = updated;
+        _reportFuture = Future.value(updated);
+      });
+      if (updated != null && (updated.isComplete || updated.isFailed)) {
+        _pollTimer?.cancel();
+        if (updated.isComplete && updated.videoUrl.isNotEmpty) {
+          _initVideo(updated.videoUrl);
+        }
+      }
+    });
+  }
+
+  void _initVideo(String url) {
+    _videoController?.dispose();
+    _videoController = VideoPlayerController.networkUrl(Uri.parse(url))
+      ..initialize().then((_) {
+        if (mounted) setState(() {});
+      });
   }
 
   @override
@@ -59,7 +107,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
             );
           }
 
-          final report = snapshot.data;
+          final report = _report ?? snapshot.data;
           if (report == null) {
             return const Center(child: Text('Report not found'));
           }
@@ -73,6 +121,8 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      _buildVideoSection(report),
+                      const SizedBox(height: 24),
                       _buildStatusCard(report),
                       const SizedBox(height: 24),
                       if (report.isComplete) ...[
@@ -97,6 +147,46 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildVideoSection(Report report) {
+    if (!report.isComplete && !report.isFailed) return const SizedBox();
+
+    return GlassCard(
+      padding: EdgeInsets.zero,
+      child: _videoController != null && _videoController!.value.isInitialized
+          ? Column(
+              children: [
+                AspectRatio(
+                  aspectRatio: _videoController!.value.aspectRatio,
+                  child: Stack(
+                    alignment: Alignment.bottomCenter,
+                    children: [
+                      VideoPlayer(_videoController!),
+                      _VideoControls(controller: _videoController!),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : Container(
+              height: 200,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.videocam, size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 8),
+                    Text('Tap to load video', style: TextStyle(color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 
@@ -198,55 +288,102 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
 
   Widget _buildScoreSection(Report report) {
     return GlassCard(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Confidence Scores', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 20),
           Row(
             children: [
-              Expanded(child: _buildScoreCard('Overall', report.confidenceScore ?? 0, Theme.of(context).colorScheme.primary)),
-              const SizedBox(width: 12),
-              Expanded(child: _buildScoreCard('Voice', report.voiceScore ?? 0, Colors.blue)),
-              const SizedBox(width: 12),
-              Expanded(child: _buildScoreCard('Body', report.bodyScore ?? 0, Colors.green)),
+              Icon(Icons.analytics, color: Theme.of(context).colorScheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Text('Confidence Scores', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             ],
           ),
+          const SizedBox(height: 24),
+          // Overall score gauge
+          Center(
+            child: SizedBox(
+              width: 160,
+              height: 160,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 160,
+                    height: 160,
+                    child: CircularProgressIndicator(
+                      value: (report.confidenceScore ?? 0) / 100,
+                      strokeWidth: 12,
+                      backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        _scoreColor(report.confidenceScore ?? 0),
+                      ),
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${report.confidenceScore ?? 0}',
+                        style: TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.bold,
+                          color: _scoreColor(report.confidenceScore ?? 0),
+                        ),
+                      ),
+                      Text(
+                        'Overall',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Voice and Body breakdown
+          _buildBreakdownBar('Voice', report.voiceScore ?? 0, Colors.blue, Icons.mic),
+          const SizedBox(height: 16),
+          _buildBreakdownBar('Body Language', report.bodyScore ?? 0, Colors.green, Icons.accessibility_new),
         ],
       ),
     );
   }
 
-  Widget _buildScoreCard(String label, int score, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text('$score', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: color)),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            height: 6,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                value: score / 100,
-                backgroundColor: color.withOpacity(0.2),
-                valueColor: AlwaysStoppedAnimation<Color>(color),
-              ),
-            ),
+  Widget _buildBreakdownBar(String label, int score, Color color, IconData icon) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+            const Spacer(),
+            Text('$score%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: score / 100,
+            minHeight: 8,
+            backgroundColor: color.withOpacity(0.15),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  Color _scoreColor(int score) {
+    if (score >= 80) return Colors.green;
+    if (score >= 60) return Colors.amber;
+    return Colors.red;
   }
 
   Widget _buildDetailsSection(Report report) {
@@ -258,7 +395,13 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Analysis Details', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          Row(
+            children: [
+              Icon(Icons.description, color: Theme.of(context).colorScheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Text('Analysis Details', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            ],
+          ),
           const SizedBox(height: 16),
           if (json['strengths'] != null) _buildListSection('Strengths', json['strengths'], Icons.thumb_up, Colors.green),
           if (json['weaknesses'] != null) _buildListSection('Areas to Improve', json['weaknesses'], Icons.thumb_down, Colors.red),
@@ -376,7 +519,9 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
           Text('Analyzing Your Video', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text('This usually takes 1-3 minutes depending on video length.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600)),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          Text('Auto-refreshing every 5 seconds', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey.shade500)),
+          const SizedBox(height: 8),
           Text('Report ID: ${report.id.substring(0, 8)}...', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey.shade500)),
         ],
       ),
@@ -440,5 +585,65 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     } else if (diff.inDays == 1) return 'Yesterday';
     else if (diff.inDays < 7) return '${diff.inDays}d ago';
     else return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+class _VideoControls extends StatelessWidget {
+  final VideoPlayerController controller;
+
+  const _VideoControls({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
+        ),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(
+              controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+              color: Colors.white,
+            ),
+            onPressed: () {
+              controller.value.isPlaying ? controller.pause() : controller.play();
+            },
+          ),
+          Expanded(
+            child: VideoProgressIndicator(
+              controller,
+              allowScrubbing: true,
+              colors: VideoProgressColors(
+                playedColor: Theme.of(context).colorScheme.primary,
+                bufferedColor: Colors.white24,
+                backgroundColor: Colors.white10,
+              ),
+            ),
+          ),
+          ValueListenableBuilder(
+            valueListenable: controller,
+            builder: (context, VideoPlayerValue value, _) {
+              final duration = value.duration;
+              final position = value.position;
+              if (duration == Duration.zero) return const SizedBox();
+              final remaining = duration - position;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  '-${remaining.toString().split('.').first.padLeft(8, '0').substring(3)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -21,7 +21,7 @@ class _MainShellState extends State<MainShell> {
   late final List<Widget> _screens = [
     const HomeScreen(),
     const HistoryScreen(),
-    const ProfileScreen(),
+    ProfileScreen(onViewAllTap: () => _onTabTap(1)),
   ];
 
   @override

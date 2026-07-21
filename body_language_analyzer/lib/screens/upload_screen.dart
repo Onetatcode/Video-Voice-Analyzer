@@ -1,10 +1,9 @@
-import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:http/http.dart' as http;
 
 import '../services/storage_service.dart';
 import '../services/supabase_service.dart';
@@ -24,6 +23,7 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _isUploading = false;
   String? _errorMessage;
   String? _successMessage;
+  Timer? _progressTimer;
 
   Future<void> _pickVideo() async {
     try {
@@ -68,10 +68,18 @@ class _UploadScreenState extends State<UploadScreen> {
       final user = supabaseService.client.auth.currentUser;
       if (user == null) throw Exception('User not logged in');
 
+      // Check backend health first
+      final api = context.read<ApiService>();
+      bool backendHealthy = true;
+      try {
+        await api.healthCheck();
+      } catch (e) {
+        backendHealthy = false;
+      }
+
       final storage = StorageService();
       
-      // Simulate progress updates since we can't get real progress from Supabase
-      _simulateProgress();
+      _startProgressTimer();
 
       // Upload to Supabase Storage
       final videoUrl = await storage.uploadVideo(
@@ -89,31 +97,32 @@ class _UploadScreenState extends State<UploadScreen> {
       final reportId = reportResponse['id'] as String;
 
       // Trigger backend processing
-      final api = context.read<ApiService>();
-      try {
-        await api.startProcessing(reportId);
-      } catch (e) {
-        // Processing trigger failed but upload succeeded - report will stay pending
-        print('Failed to trigger processing: $e');
+      if (backendHealthy) {
+        try {
+          await api.startProcessing(reportId);
+        } catch (e) {
+          print('Failed to trigger processing: $e');
+        }
       }
 
-      _stopProgressSimulation();
+      _stopProgressTimer();
       
       setState(() {
         _isUploading = false;
         _uploadProgress = 1.0;
-        _successMessage = 'Video uploaded successfully! Processing started - check History tab for updates.';
+        _successMessage = backendHealthy
+            ? 'Video uploaded! Processing started — check History tab for updates.'
+            : 'Video uploaded! Backend is unreachable — processing will start once it comes back online.';
         _selectedVideo = null;
       });
 
-      // Navigate back to home tab (pop this upload screen)
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted) {
           Navigator.of(context).pop();
         }
       });
     } catch (e) {
-      _stopProgressSimulation();
+      _stopProgressTimer();
       setState(() {
         _isUploading = false;
         _uploadProgress = 0.0;
@@ -122,19 +131,24 @@ class _UploadScreenState extends State<UploadScreen> {
     }
   }
 
-  void _simulateProgress() {
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (!_isUploading) return false;
+  @override
+  void dispose() {
+    _progressTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startProgressTimer() {
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!mounted || !_isUploading) return;
       setState(() {
         _uploadProgress = (_uploadProgress + 0.02).clamp(0.0, 0.9);
       });
-      return true;
     });
   }
 
-  void _stopProgressSimulation() {
-    _isUploading = false;
+  void _stopProgressTimer() {
+    _progressTimer?.cancel();
+    _progressTimer = null;
   }
 
   @override

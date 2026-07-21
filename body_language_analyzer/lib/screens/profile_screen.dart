@@ -7,7 +7,9 @@ import '../models/report.dart';
 import 'report_detail_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final VoidCallback? onViewAllTap;
+
+  const ProfileScreen({super.key, this.onViewAllTap});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -114,7 +116,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pushNamed('/history'),
+                    onPressed: widget.onViewAllTap ?? () => Navigator.of(context).pushNamed('/history'),
                     child: const Text('View All'),
                   ),
                 ],
