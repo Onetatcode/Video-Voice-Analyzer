@@ -68,15 +68,7 @@ class _UploadScreenState extends State<UploadScreen> {
       final user = supabaseService.client.auth.currentUser;
       if (user == null) throw Exception('User not logged in');
 
-      // Check backend health first
       final api = context.read<ApiService>();
-      bool backendHealthy = true;
-      try {
-        await api.healthCheck();
-      } catch (e) {
-        backendHealthy = false;
-      }
-
       final storage = StorageService();
       
       _startProgressTimer();
@@ -96,13 +88,11 @@ class _UploadScreenState extends State<UploadScreen> {
 
       final reportId = reportResponse['id'] as String;
 
-      // Trigger backend processing
-      if (backendHealthy) {
-        try {
-          await api.startProcessing(reportId);
-        } catch (e) {
-          print('Failed to trigger processing: $e');
-        }
+      // Trigger backend processing (fire-and-forget; auto-poller catches misses)
+      try {
+        await api.startProcessing(reportId);
+      } catch (e) {
+        print('Backend unreachable — auto-poller will pick up report $reportId');
       }
 
       _stopProgressTimer();
@@ -110,9 +100,7 @@ class _UploadScreenState extends State<UploadScreen> {
       setState(() {
         _isUploading = false;
         _uploadProgress = 1.0;
-        _successMessage = backendHealthy
-            ? 'Video uploaded! Processing started — check History tab for updates.'
-            : 'Video uploaded! Backend is unreachable — processing will start once it comes back online.';
+        _successMessage = 'Video uploaded! Processing started — check History tab for updates.';
         _selectedVideo = null;
       });
 
