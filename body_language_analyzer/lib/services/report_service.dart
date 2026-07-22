@@ -4,22 +4,7 @@ import '../models/report.dart';
 class ReportService {
   final SupabaseClient _client = Supabase.instance.client;
 
-  Future<List<Report>> getUserReports() async {
-    final userId = _client.auth.currentUser?.id;
-    if (userId == null) throw Exception('User not authenticated');
-
-    final response = await _client
-        .from('reports')
-        .select()
-        .eq('user_id', userId)
-        .order('created_at', ascending: false);
-
-    return (response as List)
-        .map((json) => Report.fromJson(json as Map<String, dynamic>))
-        .toList();
-  }
-
-  Future<Report?> getReportById(String reportId) async {
+  Future<Report?> getReport(String reportId) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
 
@@ -34,23 +19,19 @@ class ReportService {
     return Report.fromJson(response as Map<String, dynamic>);
   }
 
-  Future<Report> createReport({
-    required String videoUrl,
-  }) async {
+  Future<List<Report>> getUserReports() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) throw Exception('User not authenticated');
 
     final response = await _client
         .from('reports')
-        .insert({
-          'user_id': userId,
-          'video_url': videoUrl,
-          'status': 'pending',
-        })
         .select()
-        .single();
+        .eq('user_id', userId)
+        .order('created_at', ascending: false);
 
-    return Report.fromJson(response as Map<String, dynamic>);
+    return (response as List)
+        .map((json) => Report.fromJson(json as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> updateReportStatus({
@@ -92,7 +73,4 @@ class ReportService {
         .eq('id', reportId)
         .eq('user_id', userId);
   }
-
-  // Alias for compatibility
-  Future<Report?> getReport(String reportId) => getReportById(reportId);
 }

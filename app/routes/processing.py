@@ -1,5 +1,4 @@
-from fastapi import APIRouter, HTTPException
-from typing import Optional, Dict, Any
+from fastapi import APIRouter
 from datetime import datetime
 import os
 import logging
@@ -12,48 +11,44 @@ from ..models.processing import (
     ReportStatus,
 )
 
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+load_dotenv(dotenv_path=env_path)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["processing"])
 
-# In-memory job storage (replace with Redis/DB in production)
-processing_jobs: Dict[str, Dict[str, Any]] = {}
+supabase_url = os.getenv("SUPABASE_URL", "")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+_supabase_client = None
+if supabase_url and supabase_key:
+    from supabase import create_client
+    _supabase_client = create_client(supabase_url, supabase_key)
+else:
+    logger.warning("Supabase credentials not found in environment")
 
 
 def _get_supabase_client():
-    """Create Supabase client with explicit .env path."""
-    from dotenv import load_dotenv
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    load_dotenv(dotenv_path=env_path)
-
-    supabase_url = os.getenv("SUPABASE_URL", "")
-    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    if supabase_url and supabase_key:
-        from supabase import create_client
-        return create_client(supabase_url, supabase_key)
-    logger.warning("Supabase credentials not found in environment")
-    return None
+    return _supabase_client
 
 
 @router.post("/process", response_model=ProcessingResponse)
 async def start_processing(
     request: ProcessingRequest,
 ):
-    if request.report_id in processing_jobs:
-        existing = processing_jobs[request.report_id]
-        if existing["status"] in ["pending", "processing"]:
-            return ProcessingResponse(
-                report_id=request.report_id,
-                status=existing["status"],
-                message="Job already in progress",
-            )
-
-    processing_jobs[request.report_id] = {
-        "status": "pending",
-        "request": request.model_dump(),
-        "result": None,
-        "started_at": None,
-    }
+    supabase = _get_supabase_client()
+    if supabase:
+        try:
+            existing = supabase.table("reports").select("status").eq("id", request.report_id).single().execute()
+            if existing.data and existing.data.get("status") in ["pending", "processing"]:
+                return ProcessingResponse(
+                    report_id=request.report_id,
+                    status=existing.data["status"],
+                    message="Job already in progress",
+                )
+        except Exception:
+            pass
 
     thread = threading.Thread(target=run_processing_task, args=(request.report_id,), daemon=True)
     thread.start()
@@ -63,22 +58,6 @@ async def start_processing(
         status="pending",
         message="Processing started",
     )
-
-
-@router.get("/process/{report_id}/status")
-async def get_processing_status(report_id: str):
-    if report_id not in processing_jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = processing_jobs[report_id]
-    result = job.get("result")
-
-    return {
-        "report_id": report_id,
-        "status": job.get("status", "unknown"),
-        "message": result.get("message") if result else None,
-        "result": result,
-    }
 
 
 def _save_result_to_db(supabase, report_id, result):
@@ -115,7 +94,7 @@ def _set_report_status(supabase, report_id, status):
 async def process_sync(request: ProcessingRequest):
     try:
         from ..services.processing_pipeline import ProcessingPipeline
-        pipeline = ProcessingPipeline()
+        pipeline = ProcessingPipeline(supabase_client=_supabase_client)
         try:
             supabase = _get_supabase_client()
             if supabase and (not request.video_url or not request.user_id):
@@ -131,14 +110,13 @@ async def process_sync(request: ProcessingRequest):
             return result
         finally:
             pipeline.close()
-    except ImportError as e:
+    except ImportError:
         supabase = _get_supabase_client()
-        error_msg = f"Pipeline dependencies not available (cv2/mediapipe): {e}"
         _set_report_status(supabase, request.report_id, "failed")
         return ProcessingResult(
             report_id=request.report_id,
             status=ReportStatus.FAILED,
-            error_message=error_msg,
+            error_message="Pipeline dependencies not available",
             processed_at=datetime.utcnow(),
         )
 
@@ -149,14 +127,6 @@ def run_processing_task(report_id: str):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     logger.info(f"Background task started for report {report_id}")
-
-    job = processing_jobs.get(report_id)
-    if not job:
-        processing_jobs[report_id] = {"status": "processing", "request": {}, "result": None, "started_at": datetime.utcnow().isoformat()}
-        job = processing_jobs[report_id]
-    else:
-        job["status"] = "processing"
-        job["started_at"] = datetime.utcnow().isoformat()
 
     supabase = _get_supabase_client()
 
@@ -176,9 +146,7 @@ def run_processing_task(report_id: str):
             else:
                 raise Exception(f"Report {report_id} not found in database")
         else:
-            request_dict = job.get("request", {})
-            video_url = request_dict.get("video_url")
-            user_id = request_dict.get("user_id")
+            raise Exception("Supabase client not available - cannot fetch report data")
 
         if not video_url:
             raise Exception("No video_url available for processing")
@@ -196,21 +164,11 @@ def run_processing_task(report_id: str):
         logger.info(f"Pipeline returned status: {result.status}")
         _save_result_to_db(supabase, report_id, result)
 
-        job["status"] = "complete"
-        job["result"] = {
-            "message": "Processing complete",
-            "result": result.model_dump() if hasattr(result, 'model_dump') else str(result),
-        }
-
     except ImportError as e:
-        error_message = f"Pipeline dependencies not available (cv2/mediapipe): {e}"
+        error_message = f"Pipeline dependencies not available: {e}"
         logger.error(error_message)
         _set_report_status(supabase, report_id, "failed")
-        job["status"] = "failed"
-        job["result"] = {"message": error_message, "result": None}
     except Exception as e:
         error_message = str(e)
         logger.error(f"Background processing failed for {report_id}: {e}")
         _set_report_status(supabase, report_id, "failed")
-        job["status"] = "failed"
-        job["result"] = {"message": f"Processing failed: {error_message}", "result": None}

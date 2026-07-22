@@ -19,11 +19,6 @@ class AppTheme {
   static const Color darkBackground = Color(0xFF161625);
   static const Color darkCard = Color(0xFF252538);
 
-  static const double glassBlur = 20.0;
-  static const double glassOpacity = 0.1;
-  static const double glassBorderOpacity = 0.2;
-  static const BorderRadius glassBorderRadius = BorderRadius.all(Radius.circular(16));
-
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,

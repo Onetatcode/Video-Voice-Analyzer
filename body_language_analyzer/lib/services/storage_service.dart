@@ -34,20 +34,4 @@ class StorageService {
       throw Exception('Failed to upload video: $e');
     }
   }
-
-  /// Delete video from storage
-  Future<void> deleteVideo(String videoUrl) async {
-    try {
-      // Extract file path from URL
-      final uri = Uri.parse(videoUrl);
-      final pathSegments = uri.pathSegments;
-      final bucketIndex = pathSegments.indexOf('videos');
-      if (bucketIndex != -1 && bucketIndex + 1 < pathSegments.length) {
-        final filePath = pathSegments.sublist(bucketIndex + 1).join('/');
-        await _client.storage.from('videos').remove([filePath]);
-      }
-    } catch (e) {
-      // Ignore delete errors
-    }
-  }
 }

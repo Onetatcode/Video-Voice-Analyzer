@@ -52,29 +52,6 @@ class Report {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'user_id': userId,
-      'video_url': videoUrl,
-      'voice_score': voiceScore,
-      'body_score': bodyScore,
-      'confidence_score': confidenceScore,
-      'report_json': reportJson,
-      'created_at': createdAt.toIso8601String(),
-      'status': status.name,
-      'error_message': errorMessage,
-    };
-  }
-
-  Map<String, dynamic> toInsertJson() {
-    return {
-      'user_id': userId,
-      'video_url': videoUrl,
-      'status': ReportStatus.pending.name,
-    };
-  }
-
   Report copyWith({
     String? id,
     String? userId,

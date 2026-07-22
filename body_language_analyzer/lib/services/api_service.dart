@@ -35,11 +35,4 @@ class ApiService {
     throw Exception('Start processing failed: ${response.statusCode} - ${response.body}');
   }
 
-  Future<Map<String, dynamic>> getProcessingStatus(String reportId) async {
-    final response = await http.get(Uri.parse('$_baseUrl/api/v1/process/$reportId'));
-    if (response.statusCode == 200) {
-      return json.decode(response.body) as Map<String, dynamic>;
-    }
-    throw Exception('Get status failed: ${response.statusCode}');
-  }
 }

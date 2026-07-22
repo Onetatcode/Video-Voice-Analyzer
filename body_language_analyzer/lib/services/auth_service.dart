@@ -15,28 +15,16 @@ class AuthService {
   Stream<AuthState> get authStateChanges => _auth.onAuthStateChange;
 
   Future<void> signUp({required String email, required String password}) async {
-    try {
-      final response = await _auth.signUp(email: email, password: password);
-      if (response.user == null) {
-        throw AuthException('Sign up failed: No user returned');
-      }
-    } on AuthException catch (e) {
-      throw AuthException(e.message);
-    } catch (e) {
-      throw AuthException('Sign up failed: $e');
+    final response = await _auth.signUp(email: email, password: password);
+    if (response.user == null) {
+      throw AuthException('Sign up failed: No user returned');
     }
   }
 
   Future<void> signIn({required String email, required String password}) async {
-    try {
-      final response = await _auth.signInWithPassword(email: email, password: password);
-      if (response.user == null) {
-        throw AuthException('Login failed: No user returned');
-      }
-    } on AuthException catch (e) {
-      throw AuthException(e.message);
-    } catch (e) {
-      throw AuthException('Login failed: $e');
+    final response = await _auth.signInWithPassword(email: email, password: password);
+    if (response.user == null) {
+      throw AuthException('Login failed: No user returned');
     }
   }
 
